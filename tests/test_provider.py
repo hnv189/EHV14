@@ -1,0 +1,157 @@
+import json
+
+import httpx
+import pytest
+from anthropic import Anthropic
+
+from ehv_agent.provider import ClaudeRunner
+from ehv_agent.tools import Toolset
+
+
+def sse_response(name, arguments):
+    events = [
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-5-5",
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+            },
+        },
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "Inspecting the project.\n"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "tool_use", "id": "tool_test", "name": name, "input": {}},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": json.dumps(arguments)},
+        },
+        {"type": "content_block_stop", "index": 1},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+            "usage": {"output_tokens": 20},
+        },
+        {"type": "message_stop"},
+    ]
+    body = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events)
+    return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+
+def test_real_sdk_streams_and_roundtrips_tool_results_without_network(setup):
+    _, home, config, events, cancel, workspace = setup
+    workspace.prepare()
+    requests = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            return sse_response("read_file", {"path": "hello.py"})
+        result = body["messages"][-1]["content"][0]
+        assert result["type"] == "tool_result"
+        assert "VALUE = 1" in result["content"]
+        return sse_response(
+            "complete_task", {"status": "passed", "summary": "Inspected requirements"}
+        )
+
+    client = Anthropic(
+        api_key="test-only", http_client=httpx.Client(transport=httpx.MockTransport(handle))
+    )
+    runner = ClaudeRunner(config, events, cancel, client=client)
+    try:
+        result = runner.run(
+            "requirement",
+            "work",
+            "Inspect the project",
+            Toolset("requirement", workspace, home, config, events, cancel),
+        )
+    finally:
+        runner.close()
+    assert result["status"] == "passed"
+    assert len(requests) == 2
+    assert requests[0]["tool_choice"]["disable_parallel_tool_use"] is True
+    assert "write_file" not in {t["name"] for t in requests[0]["tools"]}
+    assert any(e["kind"] == "text" and "Inspecting" in e["text"] for e in list(events.queue.queue))
+
+
+def test_provider_enforces_role_tool_permissions_and_recovers_from_tool_error(setup):
+    _, home, config, events, cancel, workspace = setup
+    workspace.prepare()
+    requests = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            return sse_response("write_file", {"path": "hello.py", "content": "oops"})
+        assert body["messages"][-1]["content"][0]["is_error"] is True
+        return sse_response(
+            "complete_task", {"status": "blocked", "summary": "Cannot write as requirement agent"}
+        )
+
+    client = Anthropic(
+        api_key="test-only", http_client=httpx.Client(transport=httpx.MockTransport(handle))
+    )
+    runner = ClaudeRunner(config, events, cancel, client=client)
+    try:
+        result = runner.run(
+            "requirement",
+            "work",
+            "Do work",
+            Toolset("requirement", workspace, home, config, events, cancel),
+        )
+    finally:
+        runner.close()
+    assert result["status"] == "blocked"
+    assert (workspace.root / "hello.py").read_text() == "VALUE = 1\n"
+
+
+def test_invalid_plan_is_rejected():
+    with pytest.raises(ValueError, match="four serial"):
+        ClaudeRunner.validate_terminal("submit_plan", {"steps": []})
+    with pytest.raises(ValueError, match="roles"):
+        ClaudeRunner.validate_terminal(
+            "submit_plan", {"steps": [{"role": "coding", "prompt": "x"}] * 4}
+        )
+    with pytest.raises(ValueError, match="summary"):
+        ClaudeRunner.validate_terminal("complete_task", {"status": "passed"})
+
+
+def test_selected_models_output_limit_is_used_in_real_sdk_request(setup):
+    _, home, config, events, cancel, workspace = setup
+    workspace.prepare()
+    config.model_max_tokens[config.model] = 4096
+
+    def handle(request):
+        body = json.loads(request.content)
+        assert body["max_tokens"] == 4096
+        return sse_response(
+            "complete_task", {"status": "passed", "summary": "Requirements reviewed"}
+        )
+
+    with Anthropic(
+        api_key="test-only", http_client=httpx.Client(transport=httpx.MockTransport(handle))
+    ) as client:
+        runner = ClaudeRunner(config, events, cancel, client=client)
+        result = runner.run(
+            "requirement",
+            "work",
+            "Inspect",
+            Toolset("requirement", workspace, home, config, events, cancel),
+        )
+    assert result["status"] == "passed"
