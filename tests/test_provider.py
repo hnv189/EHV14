@@ -155,3 +155,27 @@ def test_selected_models_output_limit_is_used_in_real_sdk_request(setup):
             Toolset("requirement", workspace, home, config, events, cancel),
         )
     assert result["status"] == "passed"
+
+
+def test_historical_naming_uses_only_father_title_tool_in_real_sdk(setup):
+    _, home, config, events, cancel, workspace = setup
+
+    def handle(request):
+        body = json.loads(request.content)
+        assert {tool["name"] for tool in body["tools"]} == {"name_session"}
+        assert "session_title" in body["tools"][0]["input_schema"]["required"]
+        return sse_response(
+            "name_session", {"session_title": "Billing Function Integration and Tests"}
+        )
+
+    with Anthropic(
+        api_key="test-only", http_client=httpx.Client(transport=httpx.MockTransport(handle))
+    ) as client:
+        result = ClaudeRunner(config, events, cancel, client=client).run(
+            "father",
+            "name",
+            "Name the saved billing task",
+            Toolset("father", workspace, home, config, events, cancel),
+        )
+    assert result["session_title"] == "Billing Function Integration and Tests"
+    assert not workspace.root.exists()

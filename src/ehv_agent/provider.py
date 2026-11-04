@@ -84,7 +84,12 @@ class ClaudeRunner:
             data["session_title"] = validate_session_title(data.get("session_title"))
 
     def run(self, role: str, mode: str, prompt: str, tools: Toolset) -> dict:
-        terminal = {"plan": "submit_plan", "review": "review_result", "work": "complete_task", "name": "name_session"}[mode]
+        terminal = {
+            "plan": "submit_plan",
+            "review": "review_result",
+            "work": "complete_task",
+            "name": "name_session",
+        }[mode]
         definitions = tools.definitions(mode)
         available = {item["name"] for item in definitions}
         system = (

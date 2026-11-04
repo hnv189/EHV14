@@ -102,8 +102,12 @@ PLAN_TOOL = schema(
     "submit_plan",
     "Assign all four specialists concrete tasks in order: requirement, design, coding, testing. Call once after inspecting the project.",
     {
-        "session_title": {"type": "string", "minLength": 5, "maxLength": 80,
-                          "description": "Give this session a specific, natural title for Recent Sessions, usually 4–8 words. Describe the actual goal, e.g. 'CSV Report Export and Validation'. No generic labels, IDs, copied prompt sentences, or Markdown."},
+        "session_title": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 80,
+            "description": "Give this session a specific, natural title for Recent Sessions, usually 4–8 words. Describe the actual goal, e.g. 'CSV Report Export and Validation'. No generic labels, IDs, copied prompt sentences, or Markdown.",
+        },
         "steps": {
             "type": "array",
             "minItems": 4,
@@ -117,22 +121,30 @@ PLAN_TOOL = schema(
                 "required": ["role", "prompt"],
                 "additionalProperties": False,
             },
-        }
+        },
     },
 )
 REVIEW_TOOL = schema(
     "review_result",
     "Review every handoff and staged changes. Approve only when the request is fulfilled and testing passed. Request rework with concrete instructions for coding and testing, or reject incomplete work.",
     {
-        "session_title": {"type": "string", "minLength": 5, "maxLength": 80,
-                          "description": "A concise, descriptive plain-text session title based on the actual work. Preserve the plan's title unless the scope changed. You, the father, own this name."},
+        "session_title": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 80,
+            "description": "A concise, descriptive plain-text session title based on the actual work. Preserve the plan's title unless the scope changed. You, the father, own this name.",
+        },
         "decision": {"enum": ["approve", "rework", "reject"]},
         "summary": STR,
     },
 )
-NAME_TOOL = schema("name_session", "Name a past session from its saved request and results. Return a specific, natural title, usually 4–8 words, in the user's language. Use the actual goal, not a generic label, task ID, timestamp, raw prompt, or Markdown. Do not perform or rerun any project work.", {
-    "session_title": {"type": "string", "minLength": 5, "maxLength": 80},
-})
+NAME_TOOL = schema(
+    "name_session",
+    "Name a past session from its saved request and results. Return a specific, natural title, usually 4–8 words, in the user's language. Use the actual goal, not a generic label, task ID, timestamp, raw prompt, or Markdown. Do not perform or rerun any project work.",
+    {
+        "session_title": {"type": "string", "minLength": 5, "maxLength": 80},
+    },
+)
 
 
 class Toolset:

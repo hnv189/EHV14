@@ -86,7 +86,10 @@ class Engine:
                         self.run_task(task, config)
                         continue
                     session = self._next_unnamed_session()
-                    if session and (os.environ.get("ANTHROPIC_API_KEY") or self.runner_factory is not ClaudeRunner):
+                    if session and (
+                        os.environ.get("ANTHROPIC_API_KEY")
+                        or self.runner_factory is not ClaudeRunner
+                    ):
                         self._name_session(session, config)
                         continue
                 self.last_error = ""
@@ -109,7 +112,9 @@ class Engine:
             raise ValueError("The father names active sessions during planning or review")
         self.sessions.name_state(session_id, "queued")
         self._name_requests.put(session_id)
-        self.events.emit("father", "session_naming", "Session title queued for the father", task_id=session_id)
+        self.events.emit(
+            "father", "session_naming", "Session title queued for the father", task_id=session_id
+        )
         self.wake.set()
 
     def _next_unnamed_session(self) -> Session | None:
@@ -121,9 +126,16 @@ class Engine:
                     return session
             except ValueError:
                 continue
-        return next((session for session in self.sessions.recent()
-                     if not session.title and session.status not in {"pending", "running"}
-                     and session.id not in self._naming_attempted), None)
+        return next(
+            (
+                session
+                for session in self.sessions.recent()
+                if not session.title
+                and session.status not in {"pending", "running"}
+                and session.id not in self._naming_attempted
+            ),
+            None,
+        )
 
     def _name_session(self, session: Session, config: Config) -> None:
         """Idle-only father call; shares the serial scheduler with project work."""
@@ -131,21 +143,52 @@ class Engine:
         self.cancel.clear()
         self.active = session.id
         self.sessions.name_state(session.id, "naming")
-        self.events.status("father", "working", "Naming a recent session from its saved request and results")
+        self.events.status(
+            "father", "working", "Naming a recent session from its saved request and results"
+        )
         try:
             naming_config = deepcopy(config)
             naming_config.max_turns = min(config.max_turns, 3)
             naming_config.max_tokens = min(config.max_tokens, 512)
             self.runner = self.runner_factory(naming_config, self.events, self.cancel)
             # Naming exposes only a terminal title tool, never project tools.
-            workspace = Workspace(Path(session.workspace or config.workspace), self.sessions.run_path(session.id), self.home, config.excludes, self.cancel, lambda _: None)
-            prompt = "Give this saved session a concise, descriptive title for Recent Sessions. Call name_session directly. Do not rerun any work or add commentary.\n" + json.dumps({"request": session.prompt[:16000], "result": session.summary[:16000], "status": session.status, "workspace": session.workspace}, ensure_ascii=False)
-            result = self.runner.run("father", "name", prompt, self._tools("father", workspace, naming_config))
-            title = self.sessions.set_title(session.id, result["session_title"], config.model_for("father"))
-            self.events.emit("father", "session_named", title, task_id=session.id, session_title=title)
+            workspace = Workspace(
+                Path(session.workspace or config.workspace),
+                self.sessions.run_path(session.id),
+                self.home,
+                config.excludes,
+                self.cancel,
+                lambda _: None,
+            )
+            prompt = (
+                "Give this saved session a concise, descriptive title for Recent Sessions. Call name_session directly. Do not rerun any work or add commentary.\n"
+                + json.dumps(
+                    {
+                        "request": session.prompt[:16000],
+                        "result": session.summary[:16000],
+                        "status": session.status,
+                        "workspace": session.workspace,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            result = self.runner.run(
+                "father", "name", prompt, self._tools("father", workspace, naming_config)
+            )
+            title = self.sessions.set_title(
+                session.id, result["session_title"], config.model_for("father")
+            )
+            self.events.emit(
+                "father", "session_named", title, task_id=session.id, session_title=title
+            )
         except Exception as error:
             self.sessions.name_state(session.id, "error", str(error))
-            self.events.emit("father", "session_name_error", f"Could not name session {session.id}: {error}", task_id=session.id)
+            self.events.emit(
+                "father",
+                "session_name_error",
+                f"Could not name session {session.id}: {error}",
+                task_id=session.id,
+            )
         finally:
             if self.runner:
                 self.runner.close()

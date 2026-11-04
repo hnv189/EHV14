@@ -85,6 +85,8 @@ The API key is read from `ANTHROPIC_API_KEY`; it is never saved in the app confi
 | `/pause`, `/resume` | Stop/start claiming new workflows; active work continues |
 | `/cancel` | Stop active work and preserve staged files |
 | `/tasks` | Show pending, running, and recent task results |
+| `/sessions` | Open the Recent Sessions tab |
+| `/sessions SESSION_ID` | Open the saved request, results, and changed files for a session |
 | `/retry TASK_ID` | Create a fresh attempt of a parent task |
 | `/focus coding`, `/focus all` | Filter or reset the activity log |
 | `/redraw` | Redraw the display using the current console viewport |
@@ -93,7 +95,7 @@ The API key is read from `ANTHROPIC_API_KEY`; it is never saved in the app confi
 
 The **Response** tab renders streamed responses and final reports with Markdown formatting, including lists, tables, bold text, and code blocks. The **Activity** tab retains the full trace of tools, command output, and formatted agent messages. Cards show a compact status and one-line preview; token counts use short labels such as `385.3k`. Click a box to focus that agent's response and log. The final father report opens the Response tab automatically.
 
-`Ctrl+X` cancels, `Ctrl+P` pauses/resumes, `Ctrl+Q` quits, `Ctrl+L` redraws the screen, `F1` shows help, and `F2` opens model settings. A terminal of at least 100×35 is comfortable; the specialist grid uses four columns at 160 columns or wider, and two columns otherwise. Smaller terminals can scroll the agent area. The input remains above the footer. Windows console rendering enables virtual-terminal output and avoids automatic scrolling when drawing the final cell of the screen; the original output mode is restored on exit.
+`Ctrl+X` cancels, `Ctrl+P` pauses/resumes, `Ctrl+Q` quits, `Ctrl+L` redraws the screen, `F1` shows help, `F2` opens model settings, and `F3` opens Recent Sessions. A terminal of at least 100×35 is comfortable; the specialist grid uses four columns at 160 columns or wider, and two columns otherwise. Smaller terminals can scroll the agent area. The input remains above the footer. Windows console rendering enables virtual-terminal output and avoids automatic scrolling when drawing the final cell of the screen; the original output mode is restored on exit.
 
 Workspace and model changes apply at the next workflow boundary. An active workflow retains its original configuration. Skills and knowledge are loaded when each agent starts its phase. Agent data stays in the same home folder when the target project changes.
 
@@ -121,6 +123,16 @@ You can also list and select models from another terminal **while the dashboard 
 
 For scripts, `models --set MODEL_ID --agent ROLE` scans and validates the requested ID before saving. Add `--home PATH` to configure a particular agent home. CLI selections affect future workflows; `/reload` refreshes the open dashboard's labels. Model scanning calls Claude's [List Models API](https://platform.claude.com/docs/en/api/python/models/list); it requests metadata and does not generate a response with a model.
 
+## Recent sessions
+
+Click **Recent Sessions**, press **F3**, or type `/sessions` to see the latest 100 workflows across the workspaces used by this agent home. Each row shows the father's title, status, creation time in your system's local timezone, and workspace. Child-agent assignments are grouped into their parent workflow instead of appearing as separate sessions. The list refreshes as work progresses and survives app restarts.
+
+The father names each new session during planning and can refine the title during final review. Titles describe the actual work, such as **CSV Report Export and Validation**, rather than task IDs, timestamps, generic labels, or a truncated copy of the prompt. The title and the father model that supplied it are saved in `runs/<id>/session.json`.
+
+Older unnamed sessions show **Awaiting father title** until the father names them from their saved request and result. This happens when the team is idle, after queued project workflows, using a short father API call on the same serial scheduler. No project work is rerun. Failed naming is attempted once per app launch; open the session and choose **Ask father to name** to retry. Pausing the scheduler also pauses this naming work.
+
+Select a row and press **Enter**, or click it, to open its saved request, result, specialist handoffs, command exit codes, changed-file list, and artifact location. Opening a session only reads saved results; it does not resume or rerun it. The current input draft is preserved, and completing a workflow will not switch you away from the Recent Sessions tab. Press **Escape** to close session details.
+
 ## Agent folders and durable scheduling
 
 The default agent home is `.ehv-agent` in the folder where you start the app. Subsequent commands discover the nearest `.ehv-agent` in the current directory or its ancestors. Use `--home` on any command to select an explicit, reusable home:
@@ -147,6 +159,7 @@ ehv-agent enqueue --home C:/agents/my-team "Add CSV export with tests"
     testing/
   runs/<task-id>/
     request.json
+    session.json                  # descriptive title supplied by the father
     baseline.json
     plan.json
     handoffs.json

@@ -35,19 +35,24 @@ class FakeRunner:
         if mode == "plan":
             assert "hello.py" in tools.execute("list_files", {})
             return {
+                "session_title": "Update Value and Validate Behavior",
                 "steps": [
                     {"role": name, "prompt": f"Assignment for {name}"}
                     for name in ["requirement", "design", "coding", "testing"]
-                ]
+                ],
             }
         if mode == "review":
             assert '"role": "testing"' in prompt
             tools.execute("get_changes", {})
             self.reviews += 1
             return {
+                "session_title": "Update Value and Validate Behavior",
                 "decision": "rework" if self.rework and self.reviews == 1 else "approve",
                 "summary": "Reviewed implementation",
             }
+        if mode == "name":
+            assert {tool["name"] for tool in tools.definitions(mode)} == {"name_session"}
+            return {"session_title": "Project Requirements and Implementation Review"}
         if role == "design":
             assert '"role": "requirement"' in prompt
         if role == "coding":

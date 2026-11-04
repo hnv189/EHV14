@@ -16,8 +16,18 @@ def validate_session_title(value: str) -> str:
     title = " ".join(value.split())
     if not 5 <= len(title) <= 80 or any(char in title for char in "`*#"):
         raise ValueError("Session title must be 5–80 characters of plain text, without Markdown")
-    generic = {"session", "new session", "untitled", "task", "new task", "work session", "project work"}
-    if title.casefold().strip(" .:-") in generic or re.fullmatch(r"(?:task|session)[\s:_-]*[0-9a-f]{4,}", title, re.I):
+    generic = {
+        "session",
+        "new session",
+        "untitled",
+        "task",
+        "new task",
+        "work session",
+        "project work",
+    }
+    if title.casefold().strip(" .:-") in generic or re.fullmatch(
+        r"(?:task|session)[\s:_-]*[0-9a-f]{4,}", title, re.I
+    ):
         raise ValueError("Name the actual work, not a generic session label or task ID")
     return title
 
@@ -28,6 +38,17 @@ def read_json(path: Path) -> dict:
         return value if isinstance(value, dict) else {}
     except (ValueError, OSError):
         return {}
+
+
+def text_value(value, default: str = "") -> str:
+    return value if isinstance(value, str) else default
+
+
+def time_order(value: str) -> float:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (ValueError, OSError, OverflowError):
+        return 0.0
 
 
 @dataclass(frozen=True)
@@ -57,7 +78,11 @@ class SessionStore:
         self.home = home
 
     def run_path(self, session_id: str) -> Path:
-        if not session_id or session_id in {".", ".."} or any(char in session_id for char in "/\\:\0"):
+        if (
+            not session_id
+            or session_id in {".", ".."}
+            or any(char in session_id for char in "/\\:\0")
+        ):
             raise ValueError("Invalid session ID")
         return self.home / "runs" / session_id
 
@@ -70,7 +95,10 @@ class SessionStore:
                     if task.get("parent_id") or not isinstance(task.get("prompt"), str):
                         continue
                     session_id = path.stem
-                    run = self.run_path(session_id)
+                    try:
+                        run = self.run_path(session_id)
+                    except ValueError:
+                        continue
                     request = read_json(run / "request.json")
                     metadata = read_json(run / "session.json")
                     title = ""
@@ -80,14 +108,24 @@ class SessionStore:
                         except ValueError:
                             pass
                     records[session_id] = Session(
-                        id=session_id, title=title, status=task.get("status", state),
-                        prompt=task["prompt"], workspace=task.get("workspace") or request.get("workspace") or "",
-                        role=role, created_at=task.get("created_at") or request.get("created_at") or "",
-                        finished_at=task.get("finished_at", ""), summary=task.get("result", ""),
-                        title_error=metadata.get("title_error", ""), title_state=metadata.get("title_state", ""),
-                        title_model=metadata.get("title_model", ""),
+                        id=session_id,
+                        title=title,
+                        status=text_value(task.get("status"), state),
+                        prompt=task["prompt"],
+                        workspace=text_value(task.get("workspace"))
+                        or text_value(request.get("workspace")),
+                        role=role,
+                        created_at=text_value(task.get("created_at"))
+                        or text_value(request.get("created_at")),
+                        finished_at=text_value(task.get("finished_at")),
+                        summary=text_value(task.get("result")),
+                        title_error=text_value(metadata.get("title_error")),
+                        title_state=text_value(metadata.get("title_state")),
+                        title_model=text_value(metadata.get("title_model")),
                     )
-        ordered = sorted(records.values(), key=lambda item: (item.created_at, item.id), reverse=True)
+        ordered = sorted(
+            records.values(), key=lambda item: (time_order(item.created_at), item.id), reverse=True
+        )
         return ordered if limit is None else ordered[:limit]
 
     def get(self, session_id: str) -> Session:
@@ -99,10 +137,17 @@ class SessionStore:
 
     def set_title(self, session_id: str, title: str, model: str) -> str:
         title = validate_session_title(title)
-        atomic_json(self.run_path(session_id) / "session.json", {
-            "id": session_id, "title": title, "title_source": "father",
-            "title_model": model, "titled_at": timestamp(), "title_state": "named",
-        })
+        atomic_json(
+            self.run_path(session_id) / "session.json",
+            {
+                "id": session_id,
+                "title": title,
+                "title_source": "father",
+                "title_model": model,
+                "titled_at": timestamp(),
+                "title_state": "named",
+            },
+        )
         return title
 
     def name_state(self, session_id: str, state: str, error: str = "") -> None:
@@ -114,19 +159,29 @@ class SessionStore:
     def report(self, session_id: str) -> str:
         session = self.get(session_id)
         run = self.run_path(session_id)
-        parts = [f"# {session.display_title}", f"**Status:** {session.status}",
-                 f"**Workspace:** {session.workspace or 'Not started'}",
-                 f"**Created:** {local_time(session.created_at)}",
-                 f"**Session ID:** `{session.id}`"]
+        parts = [
+            f"# {session.display_title}",
+            f"**Status:** {session.status}",
+            f"**Workspace:** {session.workspace or 'Not started'}",
+            f"**Created:** {local_time(session.created_at)}",
+            f"**Session ID:** `{session.id}`",
+        ]
         if session.finished_at:
             parts.append(f"**Finished:** {local_time(session.finished_at)}")
         if session.title:
             parts.append(f"**Named by:** Father · `{session.title_model}`")
         else:
-            parts.append("The father has not named this session yet. Older sessions are named when the team is idle.")
+            parts.append(
+                "The father has not named this session yet. Older sessions are named when the team is idle."
+            )
         if session.title_error:
             parts.append(f"**Naming issue:** {session.title_error}")
-        parts += ["## Request", session.prompt, "## Result", session.summary or "No final result yet."]
+        parts += [
+            "## Request",
+            session.prompt,
+            "## Result",
+            session.summary or "No final result yet.",
+        ]
         try:
             handoffs = json.loads((run / "handoffs.json").read_text(encoding="utf-8"))
         except (ValueError, OSError):
@@ -134,21 +189,38 @@ class SessionStore:
         for handoff in handoffs if isinstance(handoffs, list) else []:
             if not isinstance(handoff, dict):
                 continue
-            parts += [f"## {handoff.get('role', 'Agent').title()} · {handoff.get('status', '')}", handoff.get("summary", "")]
-            for command in handoff.get("commands", []):
+            parts += [
+                f"## {text_value(handoff.get('role'), 'Agent').title()} · {text_value(handoff.get('status'))}",
+                text_value(handoff.get("summary")),
+            ]
+            commands = handoff.get("commands", [])
+            for command in commands if isinstance(commands, list) else []:
                 if isinstance(command, dict):
-                    parts.append(f"**Command:** `{' '.join(command.get('args', []))}` · exit {command.get('exit_code')}" + (" · timed out" if command.get("timed_out") else ""))
+                    args = command.get("args", [])
+                    args = [str(arg) for arg in args] if isinstance(args, list) else []
+                    parts.append(
+                        f"**Command:** `{' '.join(args)}` · exit {command.get('exit_code')}"
+                        + (" · timed out" if command.get("timed_out") else "")
+                    )
         outcome = read_json(run / "outcome.json")
         changes = outcome.get("changes") or read_json(run / "integration.json").get("changes", [])
-        if changes:
+        if isinstance(changes, list) and changes:
             parts.append("## Files changed")
-            parts += [f"- {change.get('action', 'change')}: `{change.get('path', '')}`" for change in changes if isinstance(change, dict)]
+            parts += [
+                f"- {change.get('action', 'change')}: `{change.get('path', '')}`"
+                for change in changes
+                if isinstance(change, dict)
+            ]
         parts += ["## Saved artifacts", f"`{run}`"]
         return "\n\n".join(parts)
 
 
 def local_time(value: str) -> str:
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d %H:%M %Z")
+        return (
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M %z")
+        )
     except (ValueError, AttributeError):
         return value or "—"

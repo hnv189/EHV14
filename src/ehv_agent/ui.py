@@ -21,6 +21,7 @@ from textual.widgets import Footer, Input, Markdown, RichLog, Static, TabbedCont
 from .config import ROLES, Config
 from .engine import Engine
 from .events import Events
+from .session_browser import SessionBrowser, SessionDetails
 from .terminal import WindowsConsole
 
 COLORS = {
@@ -47,6 +48,7 @@ HELP = """Type a request and press Enter to queue a workflow.
 /pause /resume      Pause or resume claiming new workflows; current work continues
 /cancel             Cancel the active workflow; preserve staged files
 /tasks              List pending and recent results
+/sessions [ID]      Open Recent Sessions or inspect a saved session (F3)
 /retry TASK_ID      Queue a fresh attempt of a completed/failed parent workflow
 /focus ROLE|all     Filter the live activity log
 /redraw             Redraw the screen after a terminal resize (Ctrl+L)
@@ -122,6 +124,7 @@ class AgentApp(App):
         Binding("ctrl+l", "redraw", "Redraw"),
         Binding("f1", "help", "Help"),
         Binding("f2", "models", "Models"),
+        Binding("f3", "sessions", "Sessions"),
     ]
 
     def __init__(
@@ -142,6 +145,7 @@ class AgentApp(App):
         self.response_dirty = False
         self.focus_role = "all"
         self.closing = False
+        self.session_titles: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Static("EHV AGENT    /    SERIAL MULTI-AGENT WORKBENCH", id="brand")
@@ -165,6 +169,8 @@ class AgentApp(App):
                 yield RichLog(
                     id="activity", wrap=True, markup=False, highlight=False, max_lines=3000
                 )
+            with TabPane("Recent Sessions", id="sessions-tab"):
+                yield SessionBrowser(self.home)
         yield Input(placeholder="Describe a task…  /help for commands", id="prompt")
         yield Footer()
 
@@ -212,7 +218,11 @@ class AgentApp(App):
 
     def update_workspace(self) -> None:
         paused = "PAUSED" if self.engine.paused.is_set() else "WATCHING"
-        active = f" · active {self.engine.active}" if self.engine.active else ""
+        active = (
+            f" · {self.session_titles.get(self.engine.active, 'father is preparing a session')}"
+            if self.engine.active
+            else ""
+        )
         self.query_one("#workspace", Static).update(
             f"{self.config.workspace}\n{paused}{active} · config {self.home / 'config.json'}"
         )
@@ -250,6 +260,8 @@ class AgentApp(App):
                 continue
             card = self.cards[role]
             dirty.add(role)
+            if kind == "session_named":
+                self.session_titles[event["task_id"]] = event["session_title"]
             if kind == "text":
                 self.pending_text[role] += text
                 card.preview = (card.preview + text)[-1000:]
@@ -280,7 +292,11 @@ class AgentApp(App):
                         card.preview = ""
                     if card.state in {"done", "error", "cancelled"}:
                         self.set_response(role, text)
-                        if role == "father" and self.focus_role == "all":
+                        if (
+                            role == "father"
+                            and self.focus_role == "all"
+                            and self.query_one("#panels", TabbedContent).active != "sessions-tab"
+                        ):
                             self.query_one("#panels", TabbedContent).active = "response-tab"
                 elif kind == "tool":
                     card.action_text = text
@@ -345,7 +361,7 @@ class AgentApp(App):
     def command(self, text: str) -> None:
         command, _, argument = text.partition(" ")
         argument = argument.strip()
-        if command not in {"/focus", "/redraw", "/models", "/settings"}:
+        if command not in {"/focus", "/redraw", "/models", "/settings", "/sessions"}:
             self.query_one("#panels", TabbedContent).active = "activity-tab"
         if command == "/workspace":
             path = argument.strip('"').strip("'")
@@ -378,6 +394,11 @@ class AgentApp(App):
             self.reload_config()
         elif command in {"/models", "/settings"}:
             self.action_models(argument or "default")
+        elif command == "/sessions":
+            if argument:
+                self.open_session(argument)
+            else:
+                self.action_sessions()
         elif command == "/reload":
             self.reload_config()
         elif command == "/pause":
@@ -447,6 +468,18 @@ class AgentApp(App):
         if self.closing or isinstance(self.screen, ModelPicker):
             return
         self.push_screen(ModelPicker(self.home, target), self.model_selected)
+
+    def action_sessions(self) -> None:
+        self.query_one("#panels", TabbedContent).active = "sessions-tab"
+        self.call_after_refresh(self.query_one("#sessions-table").focus)
+
+    @on(SessionBrowser.OpenSession)
+    def session_selected(self, event: SessionBrowser.OpenSession) -> None:
+        self.open_session(event.session_id)
+
+    def open_session(self, session_id: str) -> None:
+        self.engine.sessions.get(session_id)
+        self.push_screen(SessionDetails(self.home, session_id, self.engine.request_session_name))
 
     def model_selected(self, result: tuple[str, str] | None) -> None:
         if result is not None:
