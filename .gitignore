@@ -1,0 +1,10 @@
+.conda-env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ehv-agent/
+build/
+dist/
+.env
